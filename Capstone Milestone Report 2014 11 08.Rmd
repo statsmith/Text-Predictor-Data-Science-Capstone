@@ -1,0 +1,283 @@
+---
+title: "Data Science Capstone Milestone Report"
+author: "David Smith"
+date: "Saturday, November 08, 2014"
+output: html_document
+---
+
+```{r Initialize, cache=TRUE, echo=FALSE, message=FALSE}
+
+
+
+# Libraries
+        library(tm)
+        library(qdap)
+        library(RWeka)
+        library(openNLP)
+
+# Set Constants
+        setwd("C:/Users/HFDSS103/Documents/Coursera/Capstone/Corpus25KNoStem")
+
+        
+# Functions
+        f1 <- content_transformer(function(x, replaceMe, withMe) gsub(replaceMe, withMe, x))
+        BigramTokenizer <- function(x) NGramTokenizer(x, Weka_control(min = 2, max = 2))
+        TrigramTokenizer <- function(x) NGramTokenizer(x, Weka_control(min = 3, max = 3))
+        
+
+# Get Corpus
+        myCorpus <- Corpus(DirSource(encoding="UTF-8") )
+
+```
+
+```{r Tokenize, cache=TRUE, echo=FALSE, message=FALSE}
+# Tokenize
+        # Rweka Word Token
+        myWordToken <- WordTokenizer(myCorpus)
+        
+        # Rweka 2-gram Token
+        tdm2gram <- TermDocumentMatrix(myCorpus, control = list(tokenize = BigramTokenizer))
+        
+        # RWeka 3-gram Token
+        tdm3gram <- TermDocumentMatrix(myCorpus, control = list(tokenize = TrigramTokenizer))
+        
+```
+
+
+### Background ###
+
+```{r docLines, echo=FALSE, message=FALSE}
+# How Many Lines in Each Text Document: length function not working in markdown... fix this!
+        lBlogs <- length(myCorpus[[1]]$content)
+                lBlogs <- 64517
+        lNews <- length(myCorpus[[2]]$content)
+                lNews <- 56700
+        lTweets <- length(myCorpus[[3]]$content)
+                lTweets <- 28039
+        lTotal <- lBlogs + lNews + lTweets
+
+```
+
+
+In partnership with [SwiftKey](http://swiftkey.com/en/), the Coursera Data Science Capstone project challenges students to apply what they have learned in the data science certification program, as well as their independence, creativity, and initiative in the development of a data product highlighting predictive text models.  (I bet you could have predicted that last word "models"...).  
+
+The [texts](https://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip) used for this project include US blogs, news, and tweets. Note that prior to the exploratory analysis, the texts were cleaned by converting everything to lowercase, removing extra white spaces, removing special characters, removing offensive words, converting all end-of-sentence characters to periods, converting all numbers to the symbol "#", and separating the data into sentences.  In addition, only the first 25000 lines of each text source were included for exploratory analysis, yielding a total of `r lTotal` lines for analysis (`r lBlogs` from blogs, `r lNews` from news, and `r lTweets` from tweets).
+
+
+### Objectives ###
+
+The objectives of this milestone report are to...  
+
+* Demonstrate the data has been successfully downloaded  
+* Provide summary statistics about the data sets  
+* Report interesting findings  
+* Get feedback on plans for creating a prediction algorithm   
+
+
+### Distribution of Word Frequencies ###
+
+The first step in exploring the data is to simply identify the distribution of word frequencies.  
+
+
+```{r Explore1, echo=FALSE, results='hide', message=FALSE}
+
+# Distribution of Word Frequency
+
+        dfWords <- data.frame(table(myWordToken))
+        dfWords <- dfWords[order(-dfWords$Freq),]
+        names(dfWords) <- c("Word","Freq")
+
+        totalWords <- sum(dfWords$Freq)
+        uniqueWords <- dim(dfWords)[1]
+        singleWords <- dim(dfWords[dfWords$Freq==1,])[1]
+        singleRatio <- round(100*singleWords/uniqueWords,1)
+
+        i=145  # 145 Words covers 50% of all Words
+        sum(dfWords$Freq[1:i])/totalWords 
+
+        j=8500  # 145 Words covers 50% of all Words
+        sum(dfWords$Freq[1:j])/totalWords 
+
+       
+
+```
+
+* There are `r totalWords` total "words" in the corpus
+* There are `r uniqueWords` unique words in the corpus
+* There are `r singleWords` words (`r singleRatio`%) that are used only once in the corpus (and therefore may not be very useful for prediction purposes)  
+
+Figure 1 below plots the Log10 frequency of words in the corpus.  Note that the distribution is highly skewed, further suggesting that...  
+
+* A large number of words are only included once (recall: Log10(1)=0)  
+* A relatively small proportion of the words are used extremely often (and therefore represent a majority of the text).   
+
+```{r Explore2, echo=FALSE, message=FALSE}
+
+# Distribution of Word Frequency
+
+        hist(log10(dfWords$Freq),col="blue", xlab="Log10 (Word Frequency)", ylab="Number of Words", main="Figure 1: Distribution of Word Frequencies") 
+        
+```
+
+  
+Figure 2 (below) further summarizes the idea that a relatively small number of unique words account for a large proportion of all the words in the corpus.  In fact, about `r i` words account for 50% of all the words in the corpus.  Interestingly, we need about `r j` words to account for 90% of all words in the corpus.
+
+
+```{r Explore4, echo=FALSE, message=FALSE}
+
+    
+         # Word Coverage...
+                goTo <- 2000
+                m <- matrix(NA, nrow=goTo, ncol=2)
+                m[ ,1] <- 1:goTo
+                for (i in 1:goTo){
+                        m[i,2] <- sum(dfWords$Freq[1:i])/totalWords
+                }
+
+        plot(m[,2]~m[,1],type="l", xlab="Number of Unique Words", 
+             ylab="Proportion of Total Words in Corpus", 
+             main="Figure 2: Word Coverage", col="blue") + 
+                abline(v=145, col="red", lty=2) + abline(h=0.5, col="red", lty=2)
+
+
+```
+
+
+### Most Frequent Words ###
+
+The next logical question is "which words are used most frequently"?  The table below summarizes the top 20 most frequent words.  Notice that these frequent words tend to be conjunctions, pronouns, prepositions, or conjugations of the verb "to be", with a small number of letters.  
+
+
+```{r Explore3, echo=FALSE, message=FALSE}
+
+# Distribution of Word Frequency
+
+        print.data.frame(dfWords[1:20,],row.names=FALSE)
+
+```
+
+
+### Distribution of Word Combinations (2-Grams) ###
+
+Next, we consider the most frequent two word combinations (i.e. "2-grams").  As with individual words, we can quantify the number and frequency of 2-grams.
+
+
+```{r Explore5, echo=FALSE, message=FALSE}
+# Freq 2-gram words...
+        library(tm)
+        #tdm2gram
+        #findFreqTerms(tdm2gram,1000)
+
+        m2g <- as.matrix(tdm2gram)
+        df2g <- data.frame(m2g)
+        names(df2g) <- c("Blogs","News","Tweets")
+        df2g$Total <- rowSums(df2g)
+        df2g<-df2g[order(df2g$Total, decreasing=TRUE),]
+
+        total2g <- sum(df2g$Total)
+        unique2g <- dim(df2g)[1]
+        single2g <- dim(df2g[df2g$Total==1,])[1]
+        single2gRatio <- round(100*single2g/unique2g,1)
+
+
+```
+
+
+* There are `r total2g` total 2-grams (i.e. two word combos) in the corpus
+* There are `r unique2g` unique 2-grams in the corpus
+* There are `r single2g` (`r single2gRatio`%) 2-grams that occure only once in the corpus (and therefore may not be very useful for prediction purposes). This is an even larger proportion than observed for individual words (`r singleRatio`%) 
+ 
+
+Figure 3 below plots the Log10 frequency of 2-grams in the corpus.  The distribution of 2-grams is even more highly skewed than the distribution of individual word frequencies.  
+
+
+```{r Explore6, echo=FALSE, message=FALSE}
+
+# Distribution of Word Frequency
+
+        hist(log10(df2g$Total),col="blue", xlab="Log10 (2-Gram Frequency)", ylab="Number of 2-Grams", main="Figure 3: Distribution of 2-Grams") 
+        
+```
+
+### Most Frequent 2-Grams ###
+
+The table below summarizes the top 20 most frequent 2-grams.  Not surprisingly, the most frequent 2-grams tend to be combinations of small conjunctions, pronouns, prepositions, and/or conjugations of the verb "to be".
+
+
+```{r Explore7, echo=FALSE, message=FALSE}
+
+# Distribution of 2-Grams
+
+        print.data.frame(df2g[1:20,],row.names=TRUE)
+
+```
+
+
+
+### Distribution of Word Triplets (3-Grams) ###
+
+Next, we consider the most frequent three word combinations (i.e. "3-grams").  
+
+
+```{r Explore8, echo=FALSE, message=FALSE}
+# Freq 2-gram words...
+        library(tm)
+        #tdm2gram
+        #findFreqTerms(tdm2gram,1000)
+
+        m3g <- as.matrix(tdm3gram)
+        df3g <- data.frame(m3g)
+        names(df3g) <- c("Blogs","News","Tweets")
+        df3g$Total <- rowSums(df3g)
+        df3g<-df3g[order(df3g$Total, decreasing=TRUE),]
+
+        total3g <- sum(df3g$Total)
+        unique3g <- dim(df3g)[1]
+        single3g <- dim(df3g[df3g$Total==1,])[1]
+        single3gRatio <- round(100*single3g/unique3g,1)
+
+
+```
+
+
+* There are `r total3g` total 3-grams (i.e. three word combos) in the corpus
+* There are `r unique3g` unique 3-grams in the corpus
+* There are `r single3g` (`r single3gRatio`%) 3-grams that occure only once in the corpus (and therefore may not be very useful for prediction purposes). This is an even larger proportion than observed for individual words (`r singleRatio`%) and 2-grams (`r single2gRatio`%)
+ 
+
+Figure 4 below plots the Log10 frequency of 3-grams in the corpus.  The distribution of 3-grams is even more highly skewed than the distribution of individual word frequencies and 2-grams.  
+
+
+```{r Explore9, echo=FALSE, message=FALSE}
+
+# Distribution of Word Frequency
+
+        hist(log10(df3g$Total),col="blue", xlab="Log10 (3-Gram Frequency)", ylab="Number of 3-Grams", main="Figure 3: Distribution of 3-Grams") 
+        
+```
+
+### Most Frequent 3-Grams ###
+
+The table below summarizes the top 20 most frequent 3-grams.  Again, the most frequent 3-grams tend to be combinations of small conjunctions, pronouns, prepositions, and/or conjugations of the verb "to be".
+
+
+```{r Explore10, echo=FALSE, message=FALSE}
+
+# Distribution of 3-Grams
+
+        print.data.frame(df3g[1:20,],row.names=TRUE)
+
+```
+
+
+### Modeling Strategy ###
+
+This exploratory analysis suggests the following strategies will be needed to develop a predictive text model  
+
+* Remove sparse words, sparse 2-grams, and sparse 3-grams
+* Exclude n-grams where n > 3 (as these will be even more sparse)
+* Stem words for prediction
+* Use individual word frequencies and n-gram frequencies as independent variables in predictive text model
+
+While these steps may be helpful, I am admittedly struggling as to how to actually develop a predictive text model based on this information.  Suggestions for a modeling strategy are welcome and appreciated!
+
